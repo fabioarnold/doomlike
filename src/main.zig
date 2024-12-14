@@ -140,7 +140,40 @@ pub export fn onInit() void {
     floor.init(16, 16);
 }
 
+const Player = struct {
+    theta: f32 = 0,
+    phi: f32 = 0,
+    x: f32 = 0,
+    y: f32 = 0,
+};
+var player = Player{};
+
+pub export fn onMouseMove(x: f32, y: f32) void {
+    player.phi += x;
+    player.theta = std.math.clamp(player.theta + y, -90, 90);
+}
+
+extern fn isKeyDown(key: u32) bool;
+
+var t_prev: f32 = 0;
 pub export fn onDraw() void {
+    const t: f32 = @floatCast(wasm.performance.now() / 1000.0);
+    defer t_prev = t;
+    const dt = t - t_prev;
+
+    var move_x: f32 = 0;
+    var move_y: f32 = 0;
+    if (isKeyDown(87)) move_y += 1;
+    if (isKeyDown(65)) move_x -= 1;
+    if (isKeyDown(83)) move_y -= 1;
+    if (isKeyDown(68)) move_x += 1;
+
+    const speed = 2;
+    const s = @sin(std.math.degreesToRadians(player.phi));
+    const c = @cos(std.math.degreesToRadians(player.phi));
+    player.x += speed * dt * (c * move_x + s * move_y);
+    player.y += speed * dt * (-s * move_x + c * move_y);
+
     const back_buffer = gpu.getCurrentTexture();
     defer back_buffer.release();
 
@@ -149,9 +182,8 @@ pub export fn onDraw() void {
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
     const projection = la.perspective(60, aspect_ratio, 0.01);
-    const t: f32 = @floatCast(wasm.performance.now() / 1000.0);
-    const view = la.mul(la.rotation(90, .{ 1, 0, 0 }), la.translation(0, 0, 0.5));
-    const model = la.mul(la.rotation(t * 10, .{ 0, 0, 1 }), la.translation(-8, -8, 0));
+    const view = la.mul(la.rotation(player.theta - 90, .{ 1, 0, 0 }), la.mul(la.rotation(player.phi, .{ 0, 0, 1 }), la.translation(-player.x, -player.y, -0.5)));
+    const model = la.translation(-8, -8, 0);
     const mvp = la.mul(projection, la.mul(view, model));
     gpu.queueWriteBuffer(uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
 

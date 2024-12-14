@@ -285,6 +285,11 @@ async function main() {
     window.context = context;
     window.device = device;
 
+    let keys = {};
+    env["isKeyDown"] = (key) => keys[key] === true;
+    document.addEventListener("keydown", e => keys[e.keyCode] = true);
+    document.addEventListener("keyup", e => keys[e.keyCode] = false);
+
     const response = await fetch("zig-out/bin/main.wasm");
     const bytes = await response.arrayBuffer();
     const results = await WebAssembly.instantiate(bytes, { env });
@@ -294,6 +299,23 @@ async function main() {
     window.memoryU32 = new Uint32Array(memory.buffer);
     window.memoryF32 = new Float32Array(memory.buffer);
     instance.exports.onInit();
+
+    canvas.addEventListener("click", async () => {
+        await canvas.requestPointerLock({
+            unadjustedMovement: true,
+        });
+    });
+    document.addEventListener("pointerlockchange", lockChangeAlert, false);
+    function lockChangeAlert() {
+        if (document.pointerLockElement === canvas) {
+            document.addEventListener("mousemove", onMouseMove, false);
+        } else {
+            document.removeEventListener("mousemove", onMouseMove, false);
+        }
+    }
+    function onMouseMove(e) {
+        instance.exports.onMouseMove(200 * e.movementX / canvas.height, 200 * e.movementY / canvas.height);
+    }
 
     const draw = () => {
         instance.exports.onDraw();
