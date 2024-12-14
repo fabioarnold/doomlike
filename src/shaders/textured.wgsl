@@ -23,5 +23,9 @@ struct VertexOut {
 }
 
 @fragment fn fs(in: VertexOut) -> @location(0) vec4f {
-    return textureSample(ourTexture, ourSampler, in.texcoord, u32(in.texindex));
+    let color = textureSample(ourTexture, ourSampler, in.texcoord, u32(in.texindex));
+    if (color.a == 0) {
+        discard;
+    }
+    return color;
 }

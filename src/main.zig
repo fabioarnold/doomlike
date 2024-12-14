@@ -11,24 +11,106 @@ pub const std_options = std.Options{
 
 const shader_textured_code = @embedFile("shaders/textured.wgsl");
 
-var uniform_buffer: gpu.Buffer = undefined;
 var pipeline: gpu.RenderPipeline = undefined;
 
 var floor: Floor = undefined;
+var enemy: Enemy = undefined;
+
+const Enemy = struct {
+    const sprite_data = @embedFile("textures/bug.data");
+    const sprite_width = 32;
+    const sprite_height = 32;
+    const frame_count = 3;
+
+    uniform_buffer: gpu.Buffer,
+    bind_group: gpu.BindGroup,
+    vertex_buffer: gpu.Buffer,
+    index_buffer: gpu.Buffer,
+
+    fn init(self: *Enemy) void {
+        self.uniform_buffer = gpu.createBuffer(.{
+            .size = @sizeOf(la.mat4),
+            .usage = .{ .uniform = true, .copy_dst = true },
+        });
+
+        const texture = gpu.createTexture(.{
+            .size = .{ .width = sprite_width, .height = sprite_height, .depth = frame_count },
+            .format = .rgba8unorm,
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+        });
+        gpu.queueWriteTexture(texture, .{
+            .data = sprite_data,
+            .bytes_per_row = 4 * sprite_width,
+            .rows_per_image = sprite_height,
+            .width = sprite_width,
+            .height = sprite_height,
+            .depth = frame_count,
+        });
+
+        const sampler = gpu.createSampler(.{});
+
+        self.bind_group = gpu.createBindGroup(.{
+            .layout = pipeline.getBindGroupLayout(0),
+            .entries = &.{
+                .{ .binding = 0, .resource = self.uniform_buffer },
+                .{ .binding = 1, .resource = sampler },
+                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = frame_count }) },
+            },
+        });
+
+        const vertex_size = 6 * @sizeOf(f32);
+        self.vertex_buffer = gpu.createBuffer(.{
+            .size = 4 * vertex_size,
+            .usage = .{ .vertex = true, .copy_dst = true },
+        });
+        self.index_buffer = gpu.createBuffer(.{
+            .size = 6 * @sizeOf(u16),
+            .usage = .{ .index = true, .copy_dst = true },
+        });
+
+        const vertex_data = [_]f32{
+            -1, -1, 0, 0, 0, 0,
+            1,  -1, 0, 1, 0, 0,
+            1,  1,  0, 1, 1, 0,
+            -1, 1,  0, 0, 1, 0,
+        };
+        gpu.queueWriteBuffer(self.vertex_buffer, 0, std.mem.sliceAsBytes(&vertex_data));
+
+        const index_data = [_]u16{
+            0, 1, 2,
+            0, 2, 3,
+        };
+        gpu.queueWriteBuffer(self.index_buffer, 0, std.mem.sliceAsBytes(&index_data));
+    }
+
+    fn draw(self: Enemy, render_pass: gpu.RenderPass) void {
+        render_pass.setBindGroup(0, self.bind_group);
+        render_pass.setVertexBuffer(0, self.vertex_buffer, .{});
+        render_pass.setIndexBuffer(self.index_buffer, .uint16, .{});
+        render_pass.drawIndexed(.{ .index_count = 6 });
+    }
+};
 
 const Floor = struct {
     const circuit_data = @embedFile("textures/circuit.data");
     const circuit_width = 64;
     const circuit_height = 64;
+    const tile_count = 5;
 
+    uniform_buffer: gpu.Buffer,
     bind_group: gpu.BindGroup,
     vertex_buffer: gpu.Buffer,
     index_buffer: gpu.Buffer,
     index_count: u32,
 
     fn init(self: *Floor, rows: u32, cols: u32) void {
+        self.uniform_buffer = gpu.createBuffer(.{
+            .size = @sizeOf(la.mat4),
+            .usage = .{ .uniform = true, .copy_dst = true },
+        });
+
         const texture = gpu.createTexture(.{
-            .size = .{ .width = circuit_width, .height = circuit_height, .depth = 5 },
+            .size = .{ .width = circuit_width, .height = circuit_height, .depth = tile_count },
             .format = .rgba8unorm,
             .usage = .{ .texture_binding = true, .copy_dst = true },
         });
@@ -38,16 +120,16 @@ const Floor = struct {
             .rows_per_image = circuit_height,
             .width = circuit_width,
             .height = circuit_height,
-            .depth = 5,
+            .depth = tile_count,
         });
         const sampler = gpu.createSampler(.{});
 
         self.bind_group = gpu.createBindGroup(.{
             .layout = pipeline.getBindGroupLayout(0),
             .entries = &.{
-                .{ .binding = 0, .resource = uniform_buffer },
+                .{ .binding = 0, .resource = self.uniform_buffer },
                 .{ .binding = 1, .resource = sampler },
-                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = 5 }) },
+                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = tile_count }) },
             },
         });
 
@@ -71,7 +153,7 @@ const Floor = struct {
 
                 const x: f32 = @floatFromInt(col);
                 const y: f32 = @floatFromInt(row);
-                const tile: f32 = @floatFromInt(r.intRangeLessThan(u32, 0, 5));
+                const tile: f32 = @floatFromInt(r.intRangeLessThan(u32, 0, tile_count));
                 const vertex_data = [_]f32{
                     x + 0, y + 0, 0, 0, 0, tile,
                     x + 1, y + 0, 0, 1, 0, tile,
@@ -132,12 +214,8 @@ pub export fn onInit() void {
         },
     });
 
-    uniform_buffer = gpu.createBuffer(.{
-        .size = @sizeOf(la.mat4),
-        .usage = .{ .uniform = true, .copy_dst = true },
-    });
-
     floor.init(16, 16);
+    enemy.init();
 }
 
 const Player = struct {
@@ -183,9 +261,22 @@ pub export fn onDraw() void {
 
     const projection = la.perspective(60, aspect_ratio, 0.01);
     const view = la.mul(la.rotation(player.theta - 90, .{ 1, 0, 0 }), la.mul(la.rotation(player.phi, .{ 0, 0, 1 }), la.translation(-player.x, -player.y, -0.5)));
-    const model = la.translation(-8, -8, 0);
-    const mvp = la.mul(projection, la.mul(view, model));
-    gpu.queueWriteBuffer(uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
+    var mvp = la.mul(projection, view);
+    gpu.queueWriteBuffer(floor.uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
+
+    var billboard_modelview = la.mul(view, la.translation(4, 4, 0));
+    billboard_modelview[0][0] = 1;
+    billboard_modelview[0][1] = 0;
+    billboard_modelview[0][2] = 0;
+    billboard_modelview[1][0] = 0;
+    billboard_modelview[1][1] = 1;
+    billboard_modelview[1][2] = 0;
+    billboard_modelview[2][0] = 0;
+    billboard_modelview[2][1] = 0;
+    billboard_modelview[2][2] = 1;
+    const sprite = la.mul(la.translation(0, 0.25, 0), la.scale(0.25, -0.25, 1));
+    mvp = la.mul(projection, la.mul(billboard_modelview, sprite));
+    gpu.queueWriteBuffer(enemy.uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
 
     const command_encoder = gpu.createCommandEncoder();
     defer command_encoder.release();
@@ -206,6 +297,7 @@ pub export fn onDraw() void {
 
     render_pass.setPipeline(pipeline);
     floor.draw(render_pass);
+    enemy.draw(render_pass);
     render_pass.end();
 
     const command_buffer = command_encoder.finish();

@@ -32,6 +32,15 @@ pub fn translation(x: f32, y: f32, z: f32) mat4 {
     };
 }
 
+pub fn scale(x: f32, y: f32, z: f32) mat4 {
+    return .{
+        .{ x, 0, 0, 0 },
+        .{ 0, y, 0, 0 },
+        .{ 0, 0, z, 0 },
+        .{ 0, 0, 0, 1 },
+    };
+}
+
 pub fn rotation(angle_degrees: f32, axis: vec3) mat4 {
     var result = identity();
 
