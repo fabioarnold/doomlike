@@ -57,6 +57,10 @@ pub const TextureDescriptor = struct {
     usage: TextureUsage,
 };
 
+pub const TextureViewDescriptor = struct {
+    array_layer_count: u32 = 1,
+};
+
 pub const SamplerDescriptor = struct {};
 
 pub const BindGroupDescriptor = struct {
@@ -135,8 +139,8 @@ pub const Texture = struct {
         self.object.release();
     }
 
-    pub fn createView(self: Texture) TextureView {
-        return wgpu_texture_create_view(self.object);
+    pub fn createView(self: Texture, descriptor: TextureViewDescriptor) TextureView {
+        return wgpu_texture_create_view(self.object, &descriptor);
     }
 
     pub fn getWidth(self: Texture) u32 {
@@ -288,7 +292,7 @@ extern fn wgpu_device_create_command_encoder() Object;
 extern fn wgpu_device_create_texture(*const TextureDescriptor) Object;
 extern fn wgpu_device_create_sampler(*const SamplerDescriptor) Sampler;
 extern fn wgpu_device_create_bind_group(*const BindGroupDescriptor) BindGroup;
-extern fn wgpu_texture_create_view(texture: Object) TextureView;
+extern fn wgpu_texture_create_view(texture: Object, *const TextureViewDescriptor) TextureView;
 extern fn wgpu_texture_width(texture: Object) u32;
 extern fn wgpu_texture_height(texture: Object) u32;
 extern fn wgpu_pipeline_get_bind_group_layout(pipeline: Object, u32) BindGroupLayout;

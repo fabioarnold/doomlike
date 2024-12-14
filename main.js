@@ -165,8 +165,13 @@ const wgpu_device_create_bind_group = (descriptor) => {
     }));
 }
 
-const wgpu_texture_create_view = (texture) => {
-    return wgpuStore(wgpu[texture].createView());
+const wgpu_texture_create_view = (texture, descriptor) => {
+    const arrayLayerCount = memoryU32[descriptor / 4];
+    const dimension = arrayLayerCount > 1 ? "2d-array" : "2d";
+    return wgpuStore(wgpu[texture].createView({
+        dimension,
+        arrayLayerCount,
+    }));
 }
 
 const wgpu_texture_width = (texture) => {

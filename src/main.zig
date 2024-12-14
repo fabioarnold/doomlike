@@ -11,15 +11,93 @@ pub const std_options = std.Options{
 
 const shader_textured_code = @embedFile("shaders/textured.wgsl");
 
-const texture_data = @embedFile("textures/brickwall.data");
-const texture_width = 32;
-const texture_height = 32;
-
 var uniform_buffer: gpu.Buffer = undefined;
-var bind_group: gpu.BindGroup = undefined;
-var vertex_buffer: gpu.Buffer = undefined;
-var index_buffer: gpu.Buffer = undefined;
 var pipeline: gpu.RenderPipeline = undefined;
+
+var floor: Floor = undefined;
+
+const Floor = struct {
+    const circuit_data = @embedFile("textures/circuit.data");
+    const circuit_width = 64;
+    const circuit_height = 64;
+
+    bind_group: gpu.BindGroup,
+    vertex_buffer: gpu.Buffer,
+    index_buffer: gpu.Buffer,
+    index_count: u32,
+
+    fn init(self: *Floor, rows: u32, cols: u32) void {
+        const texture = gpu.createTexture(.{
+            .size = .{ .width = circuit_width, .height = circuit_height, .depth = 5 },
+            .format = .rgba8unorm,
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+        });
+        gpu.queueWriteTexture(texture, .{
+            .data = circuit_data,
+            .bytes_per_row = 4 * circuit_width,
+            .rows_per_image = circuit_height,
+            .width = circuit_width,
+            .height = circuit_height,
+            .depth = 5,
+        });
+        const sampler = gpu.createSampler(.{});
+
+        self.bind_group = gpu.createBindGroup(.{
+            .layout = pipeline.getBindGroupLayout(0),
+            .entries = &.{
+                .{ .binding = 0, .resource = uniform_buffer },
+                .{ .binding = 1, .resource = sampler },
+                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = 5 }) },
+            },
+        });
+
+        const vertex_size = 6 * @sizeOf(f32);
+        self.vertex_buffer = gpu.createBuffer(.{
+            .size = rows * cols * 4 * vertex_size,
+            .usage = .{ .vertex = true, .copy_dst = true },
+        });
+        self.index_buffer = gpu.createBuffer(.{
+            .size = rows * cols * 6 * @sizeOf(u16),
+            .usage = .{ .index = true, .copy_dst = true },
+        });
+
+        var rng = std.Random.DefaultPrng.init(0);
+        const r = rng.random();
+
+        var i: u16 = 0;
+        for (0..rows) |row| {
+            for (0..cols) |col| {
+                defer i += 1;
+
+                const x: f32 = @floatFromInt(col);
+                const y: f32 = @floatFromInt(row);
+                const tile: f32 = @floatFromInt(r.intRangeLessThan(u32, 0, 5));
+                const vertex_data = [_]f32{
+                    x + 0, y + 0, 0, 0, 0, tile,
+                    x + 1, y + 0, 0, 1, 0, tile,
+                    x + 1, y + 1, 0, 1, 1, tile,
+                    x + 0, y + 1, 0, 0, 1, tile,
+                };
+                gpu.queueWriteBuffer(self.vertex_buffer, i * 4 * vertex_size, std.mem.sliceAsBytes(&vertex_data));
+
+                const offset: u16 = @intCast(i * 4);
+                const index_data = [_]u16{
+                    offset + 0, offset + 1, offset + 2,
+                    offset + 0, offset + 2, offset + 3,
+                };
+                gpu.queueWriteBuffer(self.index_buffer, i * 6 * @sizeOf(u16), std.mem.sliceAsBytes(&index_data));
+            }
+        }
+        self.index_count = i * 6;
+    }
+
+    fn draw(self: Floor, render_pass: gpu.RenderPass) void {
+        render_pass.setBindGroup(0, self.bind_group);
+        render_pass.setVertexBuffer(0, self.vertex_buffer, .{});
+        render_pass.setIndexBuffer(self.index_buffer, .uint16, .{});
+        render_pass.drawIndexed(.{ .index_count = self.index_count });
+    }
+};
 
 pub export fn onInit() void {
     const module = gpu.createShaderModule(.{ .code = shader_textured_code });
@@ -28,17 +106,22 @@ pub export fn onInit() void {
             .module = module,
             .buffers = &.{
                 .{
-                    .array_stride = (2 + 3) * 4,
+                    .array_stride = (3 + 2 + 1) * @sizeOf(f32),
                     .attributes = &.{
                         .{
-                            .format = .float32x2,
+                            .format = .float32x3,
                             .offset = 0,
                             .shader_location = 0,
                         },
                         .{
-                            .format = .float32x3,
-                            .offset = 2 * 4,
+                            .format = .float32x2,
+                            .offset = 3 * @sizeOf(f32),
                             .shader_location = 1,
+                        },
+                        .{
+                            .format = .float32,
+                            .offset = 5 * @sizeOf(f32),
+                            .shader_location = 2,
                         },
                     },
                 },
@@ -54,50 +137,7 @@ pub export fn onInit() void {
         .usage = .{ .uniform = true, .copy_dst = true },
     });
 
-    const texture = gpu.createTexture(.{
-        .size = .{ .width = texture_width, .height = texture_height },
-        .format = .rgba8unorm,
-        .usage = .{ .texture_binding = true, .copy_dst = true },
-    });
-    gpu.queueWriteTexture(texture, .{
-        .data = texture_data,
-        .bytes_per_row = 4 * texture_width,
-        .width = texture_width,
-        .height = texture_height,
-    });
-    const sampler = gpu.createSampler(.{});
-
-    bind_group = gpu.createBindGroup(.{
-        .layout = pipeline.getBindGroupLayout(0),
-        .entries = &.{
-            .{ .binding = 0, .resource = uniform_buffer },
-            .{ .binding = 1, .resource = sampler },
-            .{ .binding = 2, .resource = texture.createView() },
-        },
-    });
-
-    const vertex_data = [_]f32{
-        -0.5, -0.5, 1, 0, 0,
-        0.5,  -0.5, 0, 1, 0,
-        0.5,  0.5,  0, 0, 1,
-        -0.5, 0.5,  1, 1, 0,
-    };
-    const index_data = [_]u16{
-        0, 1, 2,
-        0, 2, 3,
-    };
-
-    vertex_buffer = gpu.createBuffer(.{
-        .size = @sizeOf(@TypeOf(vertex_data)),
-        .usage = .{ .vertex = true, .copy_dst = true },
-    });
-    index_buffer = gpu.createBuffer(.{
-        .size = @sizeOf(@TypeOf(index_data)),
-        .usage = .{ .index = true, .copy_dst = true },
-    });
-
-    gpu.queueWriteBuffer(vertex_buffer, 0, std.mem.sliceAsBytes(&vertex_data));
-    gpu.queueWriteBuffer(index_buffer, 0, std.mem.sliceAsBytes(&index_data));
+    floor.init(16, 16);
 }
 
 pub export fn onDraw() void {
@@ -110,14 +150,15 @@ pub export fn onDraw() void {
 
     const projection = la.perspective(60, aspect_ratio, 0.01);
     const t: f32 = @floatCast(wasm.performance.now() / 1000.0);
-    const model = la.mul(la.translation(0, 0, -2), la.rotation(100 * t, .{ 0, 1, 0 }));
-    const mvp = la.mul(projection, model);
+    const view = la.mul(la.rotation(90, .{ 1, 0, 0 }), la.translation(0, 0, 0.5));
+    const model = la.mul(la.rotation(t * 10, .{ 0, 0, 1 }), la.translation(-8, -8, 0));
+    const mvp = la.mul(projection, la.mul(view, model));
     gpu.queueWriteBuffer(uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
 
     const command_encoder = gpu.createCommandEncoder();
     defer command_encoder.release();
 
-    const back_buffer_view = back_buffer.createView();
+    const back_buffer_view = back_buffer.createView(.{});
     defer back_buffer_view.release();
     const render_pass = command_encoder.beginRenderPass(.{
         .color_attachments = &.{
@@ -132,10 +173,7 @@ pub export fn onDraw() void {
     defer render_pass.release();
 
     render_pass.setPipeline(pipeline);
-    render_pass.setBindGroup(0, bind_group);
-    render_pass.setVertexBuffer(0, vertex_buffer, .{});
-    render_pass.setIndexBuffer(index_buffer, .uint16, .{});
-    render_pass.drawIndexed(.{ .index_count = 6 });
+    floor.draw(render_pass);
     render_pass.end();
 
     const command_buffer = command_encoder.finish();
