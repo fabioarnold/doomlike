@@ -1,6 +1,7 @@
 const std = @import("std");
 const wasm = @import("web/wasm.zig");
 const gpu = @import("web/gpu.zig");
+const la = @import("linear_algebra.zig");
 const log = std.log.scoped(.main_wasm);
 
 pub const std_options = std.Options{
@@ -13,8 +14,6 @@ const shader_textured_code = @embedFile("shaders/textured.wgsl");
 const texture_data = @embedFile("textures/brickwall.data");
 const texture_width = 32;
 const texture_height = 32;
-
-var mvp: [16]f32 = undefined;
 
 var uniform_buffer: gpu.Buffer = undefined;
 var bind_group: gpu.BindGroup = undefined;
@@ -51,7 +50,7 @@ pub export fn onInit() void {
     });
 
     uniform_buffer = gpu.createBuffer(.{
-        .size = @sizeOf(@TypeOf(mvp)),
+        .size = @sizeOf(la.mat4),
         .usage = .{ .uniform = true, .copy_dst = true },
     });
 
@@ -102,27 +101,28 @@ pub export fn onInit() void {
 }
 
 pub export fn onDraw() void {
-    const angle: f32 = @floatCast(wasm.performance.now() / 1000.0);
-    const s = @sin(angle);
-    const c = @cos(angle);
-    mvp = .{
-        c,  s, 0, 0,
-        -s, c, 0, 0,
-        0,  0, 1, 0,
-        0,  0, 0, 1,
-    };
-    gpu.queueWriteBuffer(uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
-
-    const back_buffer = gpu.getCurrentTextureView();
+    const back_buffer = gpu.getCurrentTexture();
     defer back_buffer.release();
+
+    const width = back_buffer.getWidth();
+    const height = back_buffer.getHeight();
+    const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
+
+    const projection = la.perspective(60, aspect_ratio, 0.01);
+    const t: f32 = @floatCast(wasm.performance.now() / 1000.0);
+    const model = la.mul(la.translation(0, 0, -2), la.rotation(100 * t, .{ 0, 1, 0 }));
+    const mvp = la.mul(projection, model);
+    gpu.queueWriteBuffer(uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
 
     const command_encoder = gpu.createCommandEncoder();
     defer command_encoder.release();
 
+    const back_buffer_view = back_buffer.createView();
+    defer back_buffer_view.release();
     const render_pass = command_encoder.beginRenderPass(.{
         .color_attachments = &.{
             .{
-                .view = back_buffer,
+                .view = back_buffer_view,
                 .load_op = .clear,
                 .store_op = .store,
                 .clear_value = .{ .r = 0.2, .g = 0.2, .b = 0.3, .a = 1 },

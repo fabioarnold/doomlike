@@ -131,8 +131,20 @@ pub const Buffer = Object;
 pub const Texture = struct {
     object: Object,
 
+    pub fn release(self: Texture) void {
+        self.object.release();
+    }
+
     pub fn createView(self: Texture) TextureView {
         return wgpu_texture_create_view(self.object);
+    }
+
+    pub fn getWidth(self: Texture) u32 {
+        return wgpu_texture_width(self.object);
+    }
+
+    pub fn getHeight(self: Texture) u32 {
+        return wgpu_texture_height(self.object);
     }
 };
 
@@ -227,8 +239,8 @@ pub fn createRenderPipeline(descriptor: RenderPipelineDescriptor) RenderPipeline
     return .{ .object = wgpu_device_create_render_pipeline(&descriptor) };
 }
 
-pub fn getCurrentTextureView() TextureView {
-    return wgpu_get_current_texture_view();
+pub fn getCurrentTexture() Texture {
+    return .{ .object = wgpu_canvas_context_get_current_texture() };
 }
 
 pub fn createCommandEncoder() CommandEncoder {
@@ -268,15 +280,17 @@ pub fn queueWriteTexture(texture: Texture, args: TextureWriteArgs) void {
 }
 
 extern fn wgpu_object_destroy(Object) void;
+extern fn wgpu_canvas_context_get_current_texture() Object;
 extern fn wgpu_device_create_shader_module(*const ShaderModuleDescriptor) ShaderModule;
 extern fn wgpu_device_create_buffer(*const BufferDescriptor) Buffer;
 extern fn wgpu_device_create_render_pipeline(*const RenderPipelineDescriptor) Object;
-extern fn wgpu_get_current_texture_view() TextureView;
 extern fn wgpu_device_create_command_encoder() Object;
 extern fn wgpu_device_create_texture(*const TextureDescriptor) Object;
 extern fn wgpu_device_create_sampler(*const SamplerDescriptor) Sampler;
 extern fn wgpu_device_create_bind_group(*const BindGroupDescriptor) BindGroup;
 extern fn wgpu_texture_create_view(texture: Object) TextureView;
+extern fn wgpu_texture_width(texture: Object) u32;
+extern fn wgpu_texture_height(texture: Object) u32;
 extern fn wgpu_pipeline_get_bind_group_layout(pipeline: Object, u32) BindGroupLayout;
 extern fn wgpu_command_encoder_begin_render_pass(command_encoder: Object, *const RenderPassDescriptor) Object;
 extern fn wgpu_encoder_set_pipeline(pass_encoder: Object, pipeline: Object) void;

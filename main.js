@@ -108,8 +108,8 @@ const wgpu_device_create_render_pipeline = (descriptor) => {
     return wgpuStore(pipeline);
 }
 
-const wgpu_get_current_texture_view = () => {
-    return wgpuStore(context.getCurrentTexture().createView());
+const wgpu_canvas_context_get_current_texture = () => {
+    return wgpuStore(context.getCurrentTexture());
 }
 
 const wgpu_device_create_command_encoder = () => {
@@ -167,6 +167,14 @@ const wgpu_device_create_bind_group = (descriptor) => {
 
 const wgpu_texture_create_view = (texture) => {
     return wgpuStore(wgpu[texture].createView());
+}
+
+const wgpu_texture_width = (texture) => {
+    return wgpu[texture].width;
+}
+
+const wgpu_texture_height = (texture) => {
+    return wgpu[texture].height;
 }
 
 const wgpu_pipeline_get_bind_group_layout = (pipeline, index) => {
@@ -228,15 +236,17 @@ const env = {
     wasm_log_flush,
 
     wgpu_object_destroy,
+    wgpu_canvas_context_get_current_texture,
     wgpu_device_create_shader_module,
     wgpu_device_create_buffer,
     wgpu_device_create_render_pipeline,
-    wgpu_get_current_texture_view,
     wgpu_device_create_command_encoder,
     wgpu_device_create_texture,
     wgpu_device_create_sampler,
     wgpu_device_create_bind_group,
     wgpu_texture_create_view,
+    wgpu_texture_width,
+    wgpu_texture_height,
     wgpu_pipeline_get_bind_group_layout,
     wgpu_command_encoder_begin_render_pass,
     wgpu_encoder_set_pipeline,
