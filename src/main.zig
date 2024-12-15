@@ -9,6 +9,8 @@ pub const std_options = std.Options{
     .logFn = wasm.log,
 };
 
+var depth_texture: gpu.Texture = undefined;
+
 var floor: Floor = undefined;
 var enemies: [20]Enemy = undefined;
 var shots: [20]Shot = undefined;
@@ -388,6 +390,13 @@ const Floor = struct {
 };
 
 pub export fn onInit() void {
+    const back_buffer = gpu.getCurrentTexture();
+    depth_texture = gpu.createTexture(.{
+        .size = .{ .width = back_buffer.getWidth(), .height = back_buffer.getHeight() },
+        .format = .depth24plus,
+        .usage = .{ .render_attachment = true },
+    });
+
     var rng = std.Random.DefaultPrng.init(0);
     const r = rng.random();
 
@@ -476,12 +485,14 @@ pub export fn onDraw() void {
     const width = back_buffer.getWidth();
     const height = back_buffer.getHeight();
 
-    const depth_texture = gpu.createTexture(.{
-        .size = .{ .width = width, .height = height },
-        .format = .depth24plus,
-        .usage = .{ .render_attachment = true },
-    });
-    defer depth_texture.release();
+    if (depth_texture.getWidth() != width or depth_texture.getHeight() != height) {
+        depth_texture.release();
+        depth_texture = gpu.createTexture(.{
+            .size = .{ .width = width, .height = height },
+            .format = .depth24plus,
+            .usage = .{ .render_attachment = true },
+        });
+    }
 
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
