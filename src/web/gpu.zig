@@ -24,6 +24,11 @@ pub const TextureFormat = enum(u32) {
     depth24plus,
 };
 
+pub const TextureDimension = enum(u32) {
+    @"2d",
+    @"2d_array",
+};
+
 pub const RenderPipelineDescriptor = struct {
     vertex: struct {
         module: ShaderModule,
@@ -67,6 +72,7 @@ pub const TextureDescriptor = struct {
 };
 
 pub const TextureViewDescriptor = struct {
+    dimension: TextureDimension = .@"2d",
     array_layer_count: u32 = 1,
 };
 

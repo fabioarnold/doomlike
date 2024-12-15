@@ -11,19 +11,14 @@ pub const std_options = std.Options{
 
 var floor: Floor = undefined;
 var enemies: [20]Enemy = undefined;
+var shots: [20]Shot = undefined;
 
-const Enemy = struct {
-    const sprite_data = @embedFile("textures/bug.data");
-    const sprite_width = 32;
-    const sprite_height = 32;
-    const frame_count = 3;
+const level_width = 16;
+const level_height = 16;
 
+const Billboard = struct {
     const shader_billboard_code = @embedFile("shaders/billboard.wgsl");
     var pipeline: gpu.RenderPipeline = undefined;
-
-    var uniform_buffer: gpu.Buffer = undefined;
-    var instance_buffer: gpu.Buffer = undefined;
-    var bind_group: gpu.BindGroup = undefined;
 
     const UniformData = struct {
         view: la.mat4,
@@ -37,9 +32,6 @@ const Enemy = struct {
         frame: u32,
     };
 
-    position: la.vec2,
-    alive: bool,
-
     fn init() void {
         const module = gpu.createShaderModule(.{ .code = shader_billboard_code });
         pipeline = gpu.createRenderPipeline(.{
@@ -51,7 +43,125 @@ const Enemy = struct {
                 .depth_write_enabled = true,
             },
         });
+    }
+};
 
+const Shot = struct {
+    const speed = 8;
+
+    const sprite_data = @embedFile("textures/shot.data");
+    const sprite_width = 8;
+    const sprite_height = 8;
+
+    var uniform_buffer: gpu.Buffer = undefined;
+    var instance_buffer: gpu.Buffer = undefined;
+    var bind_group: gpu.BindGroup = undefined;
+
+    position: la.vec2,
+    direction: la.vec2,
+    active: bool,
+
+    fn init() void {
+        const texture = gpu.createTexture(.{
+            .size = .{ .width = sprite_width, .height = sprite_height },
+            .format = .rgba8unorm,
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+        });
+        gpu.queueWriteTexture(texture, .{
+            .data = sprite_data,
+            .bytes_per_row = 4 * sprite_width,
+            .width = sprite_width,
+            .height = sprite_height,
+        });
+
+        const sampler = gpu.createSampler(.{});
+
+        uniform_buffer = gpu.createBuffer(.{
+            .size = @sizeOf(Billboard.UniformData),
+            .usage = .{ .uniform = true, .copy_dst = true },
+        });
+        const sprite_scale: la.vec2 = .{ 1.0 / 16.0, -1.0 / 16.0 };
+        const sprite_offset: la.vec2 = .{ 0, 0.25 };
+        gpu.queueWriteBuffer(uniform_buffer, 2 * @sizeOf(la.mat4), std.mem.asBytes(&sprite_scale));
+        gpu.queueWriteBuffer(uniform_buffer, 2 * @sizeOf(la.mat4) + @sizeOf(la.vec2), std.mem.asBytes(&sprite_offset));
+
+        instance_buffer = gpu.createBuffer(.{
+            .size = shots.len * @sizeOf(Billboard.InstanceData),
+            .usage = .{ .storage = true, .copy_dst = true },
+        });
+
+        bind_group = gpu.createBindGroup(.{
+            .layout = Billboard.pipeline.getBindGroupLayout(0),
+            .entries = &.{
+                .{ .binding = 0, .resource = uniform_buffer },
+                .{ .binding = 1, .resource = sampler },
+                .{ .binding = 2, .resource = texture.createView(.{ .dimension = .@"2d_array" }) },
+                .{ .binding = 3, .resource = instance_buffer },
+            },
+        });
+    }
+
+    fn updateAll(dt: f32) void {
+        for (&shots) |*shot| {
+            if (shot.active) {
+                shot.position += shot.direction * @as(la.vec2, @splat(dt));
+
+                // check enemies
+                for (&enemies) |*enemy| {
+                    if (enemy.active) {
+                        const diff = shot.position - enemy.position;
+                        const dist_sqr = diff[0] * diff[0] + diff[1] * diff[1];
+                        if (dist_sqr < 0.3 * 0.3) {
+                            enemy.hit();
+                            shot.active = false;
+                        }
+                    }
+                }
+
+                if (shot.position[0] < 0 or shot.position[1] < 0 or shot.position[0] > level_width or shot.position[1] > level_height) {
+                    shot.active = false;
+                }
+            }
+        }
+    }
+
+    fn drawAll(render_pass: gpu.RenderPass) void {
+        var instance_count: u32 = 0;
+
+        for (shots) |shot| {
+            if (shot.active) {
+                const instance_data = [_]Billboard.InstanceData{.{
+                    .position = shot.position,
+                    .frame = 0,
+                }};
+                gpu.queueWriteBuffer(instance_buffer, instance_count * @sizeOf(Billboard.InstanceData), std.mem.sliceAsBytes(&instance_data));
+                instance_count += 1;
+            }
+        }
+
+        render_pass.setPipeline(Billboard.pipeline);
+        render_pass.setBindGroup(0, bind_group);
+        render_pass.draw(.{ .vertex_count = 6, .instance_count = instance_count });
+    }
+};
+
+const Enemy = struct {
+    const sprite_data = @embedFile("textures/bug.data");
+    const sprite_width = 32;
+    const sprite_height = 32;
+    const frame_count = 4;
+
+    var uniform_buffer: gpu.Buffer = undefined;
+    var instance_buffer: gpu.Buffer = undefined;
+    var bind_group: gpu.BindGroup = undefined;
+
+    position: la.vec2,
+    frame: u32,
+    idle: f32,
+    hurt_cooldown: f32,
+    active: bool,
+
+    fn init() void {
         const texture = gpu.createTexture(.{
             .size = .{ .width = sprite_width, .height = sprite_height, .depth = frame_count },
             .format = .rgba8unorm,
@@ -69,45 +179,75 @@ const Enemy = struct {
         const sampler = gpu.createSampler(.{});
 
         uniform_buffer = gpu.createBuffer(.{
-            .size = @sizeOf(UniformData),
+            .size = @sizeOf(Billboard.UniformData),
             .usage = .{ .uniform = true, .copy_dst = true },
         });
         const sprite_scale: la.vec2 = .{ 0.25, -0.25 };
         const sprite_offset: la.vec2 = .{ 0, 0.25 };
-        gpu.queueWriteBuffer(Enemy.uniform_buffer, 2 * @sizeOf(la.mat4), std.mem.asBytes(&sprite_scale));
-        gpu.queueWriteBuffer(Enemy.uniform_buffer, 2 * @sizeOf(la.mat4) + @sizeOf(la.vec2), std.mem.asBytes(&sprite_offset));
+        gpu.queueWriteBuffer(uniform_buffer, 2 * @sizeOf(la.mat4), std.mem.asBytes(&sprite_scale));
+        gpu.queueWriteBuffer(uniform_buffer, 2 * @sizeOf(la.mat4) + @sizeOf(la.vec2), std.mem.asBytes(&sprite_offset));
 
         instance_buffer = gpu.createBuffer(.{
-            .size = enemies.len * @sizeOf(InstanceData),
+            .size = enemies.len * @sizeOf(Billboard.InstanceData),
             .usage = .{ .storage = true, .copy_dst = true },
         });
 
         bind_group = gpu.createBindGroup(.{
-            .layout = pipeline.getBindGroupLayout(0),
+            .layout = Billboard.pipeline.getBindGroupLayout(0),
             .entries = &.{
                 .{ .binding = 0, .resource = uniform_buffer },
                 .{ .binding = 1, .resource = sampler },
-                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = frame_count }) },
+                .{ .binding = 2, .resource = texture.createView(.{
+                    .dimension = .@"2d_array",
+                    .array_layer_count = frame_count,
+                }) },
                 .{ .binding = 3, .resource = instance_buffer },
             },
         });
     }
 
-    fn draw(render_pass: gpu.RenderPass) void {
+    fn hit(self: *Enemy) void {
+        self.hurt_cooldown = 0.5;
+    }
+
+    fn updateAll(dt: f32) void {
+        for (&enemies) |*enemy| {
+            if (enemy.active) {
+                if (enemy.hurt_cooldown > 0) {
+                    enemy.hurt_cooldown -= dt;
+                    enemy.frame = if (@sin(40 * enemy.hurt_cooldown) > 0) 2 else 3;
+                } else {
+                    if (enemy.frame > 1) enemy.frame = 0;
+                    if (enemy.idle > 0) {
+                        enemy.idle -= dt;
+                    } else {
+                        enemy.idle = 0.25;
+                        enemy.frame = if (enemy.frame != 0) 0 else 1;
+                    }
+
+                    // walk towards player
+                    const dir = la.vec2{ player.x, player.y } - enemy.position;
+                    enemy.position += dir * @as(la.vec2, @splat(0.1 * dt));
+                }
+            }
+        }
+    }
+
+    fn drawAll(render_pass: gpu.RenderPass) void {
         var instance_count: u32 = 0;
 
         for (enemies) |enemy| {
-            if (enemy.alive) {
-                const instance_data = [_]InstanceData{.{
+            if (enemy.active) {
+                const instance_data = [_]Billboard.InstanceData{.{
                     .position = enemy.position,
-                    .frame = 0,
+                    .frame = enemy.frame,
                 }};
-                gpu.queueWriteBuffer(instance_buffer, instance_count * @sizeOf(InstanceData), std.mem.sliceAsBytes(&instance_data));
+                gpu.queueWriteBuffer(instance_buffer, instance_count * @sizeOf(Billboard.InstanceData), std.mem.sliceAsBytes(&instance_data));
                 instance_count += 1;
             }
         }
 
-        render_pass.setPipeline(pipeline);
+        render_pass.setPipeline(Billboard.pipeline);
         render_pass.setBindGroup(0, bind_group);
         render_pass.draw(.{ .vertex_count = 6, .instance_count = instance_count });
     }
@@ -191,7 +331,10 @@ const Floor = struct {
             .entries = &.{
                 .{ .binding = 0, .resource = self.uniform_buffer },
                 .{ .binding = 1, .resource = sampler },
-                .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = tile_count }) },
+                .{ .binding = 2, .resource = texture.createView(.{
+                    .dimension = .@"2d_array",
+                    .array_layer_count = tile_count,
+                }) },
             },
         });
 
@@ -248,23 +391,40 @@ pub export fn onInit() void {
     var rng = std.Random.DefaultPrng.init(0);
     const r = rng.random();
 
-    floor.init(16, 16);
-    floor.generate(16, 16, r);
+    floor.init(level_width, level_height);
+    floor.generate(level_width, level_height, r);
 
+    Billboard.init();
+    Shot.init();
+    for (&shots) |*shot| {
+        // shot.position = .{ r.float(f32) * level_width, r.float(f32) * level_height };
+        // shot.direction = .{ 8 * r.float(f32) - 4, 8 * r.float(f32) - 4 };
+        shot.active = false;
+    }
     Enemy.init();
     for (&enemies) |*enemy| {
-        enemy.position = .{ r.float(f32) * 16, r.float(f32) * 16 };
-        enemy.alive = true;
+        enemy.position = .{ r.float(f32) * level_width, r.float(f32) * level_height };
+        enemy.frame = 0;
+        enemy.hurt_cooldown = 0;
+        enemy.idle = r.float(f32);
+        enemy.active = true;
     }
 }
 
 const Player = struct {
+    const speed = 2;
+
     theta: f32 = 0,
     phi: f32 = 0,
     x: f32 = 8,
     y: f32 = 0,
 };
 var player = Player{};
+
+var shoot = false;
+pub export fn onMouseDown() void {
+    shoot = true;
+}
 
 pub export fn onMouseMove(x: f32, y: f32) void {
     player.phi += x;
@@ -286,11 +446,29 @@ pub export fn onDraw() void {
     if (isKeyDown(83)) move_y -= 1;
     if (isKeyDown(68)) move_x += 1;
 
-    const speed = 2;
     const s = @sin(std.math.degreesToRadians(player.phi));
     const c = @cos(std.math.degreesToRadians(player.phi));
-    player.x += speed * dt * (c * move_x + s * move_y);
-    player.y += speed * dt * (-s * move_x + c * move_y);
+    const dir_x = (c * move_x + s * move_y);
+    const dir_y = (-s * move_x + c * move_y);
+    player.x += dir_x * Player.speed * dt;
+    player.y += dir_y * Player.speed * dt;
+
+    if (shoot) {
+        shoot = false;
+        for (&shots) |*shot| {
+            if (!shot.active) {
+                shot.active = true;
+                shot.direction = .{ s, c };
+                shot.position = .{ player.x, player.y };
+                shot.position += shot.direction * la.vec2{ 0.2, 0.2 }; // prevent screen flash
+                shot.direction *= @splat(Shot.speed);
+                break;
+            }
+        }
+    }
+
+    Shot.updateAll(dt);
+    Enemy.updateAll(dt);
 
     const back_buffer = gpu.getCurrentTexture();
     defer back_buffer.release();
@@ -314,6 +492,8 @@ pub export fn onDraw() void {
     );
     var mvp = la.mul(projection, view);
     gpu.queueWriteBuffer(floor.uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
+    gpu.queueWriteBuffer(Shot.uniform_buffer, 0, std.mem.sliceAsBytes(&view));
+    gpu.queueWriteBuffer(Shot.uniform_buffer, @sizeOf(la.mat4), std.mem.sliceAsBytes(&projection));
     gpu.queueWriteBuffer(Enemy.uniform_buffer, 0, std.mem.sliceAsBytes(&view));
     gpu.queueWriteBuffer(Enemy.uniform_buffer, @sizeOf(la.mat4), std.mem.sliceAsBytes(&projection));
 
@@ -343,7 +523,8 @@ pub export fn onDraw() void {
     defer render_pass.release();
 
     floor.draw(render_pass);
-    Enemy.draw(render_pass);
+    Shot.drawAll(render_pass);
+    Enemy.drawAll(render_pass);
     render_pass.end();
 
     const command_buffer = command_encoder.finish();

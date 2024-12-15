@@ -35,6 +35,7 @@ const storeOps = ["store", "discard"];
 const vertexFormats = ["float32", "float32x2", "float32x3", "float32x4"];
 const indexFormats = ["uint16", "uint32"];
 const textureFormats = ["rgba8unorm", "depth24plus"];
+const textureDimensions = ["2d", "2d-array"];
 const depthCompareFunctions = ["less", "greater"];
 
 let wgpu = {};
@@ -188,8 +189,8 @@ const wgpu_device_create_bind_group = (descriptor) => {
 }
 
 const wgpu_texture_create_view = (texture, descriptor) => {
-    const arrayLayerCount = memoryU32[descriptor / 4];
-    const dimension = arrayLayerCount > 1 ? "2d-array" : "2d";
+    const dimension = textureDimensions[memoryU32[descriptor / 4]];
+    const arrayLayerCount = memoryU32[descriptor / 4 + 1];
     return wgpuStore(wgpu[texture].createView({
         dimension,
         arrayLayerCount,
@@ -327,6 +328,7 @@ async function main() {
             unadjustedMovement: true,
         });
     });
+    canvas.addEventListener("mousedown", onMouseDown);
     document.addEventListener("pointerlockchange", lockChangeAlert, false);
     function lockChangeAlert() {
         if (document.pointerLockElement === canvas) {
@@ -337,6 +339,11 @@ async function main() {
     }
     function onMouseMove(e) {
         instance.exports.onMouseMove(200 * e.movementX / canvas.height, 200 * e.movementY / canvas.height);
+    }
+    function onMouseDown(e) {
+        if (document.pointerLockElement === canvas) {
+            instance.exports.onMouseDown();
+        }
     }
 
     const draw = () => {
