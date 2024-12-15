@@ -34,7 +34,8 @@ const loadOps = ["load", "clear"];
 const storeOps = ["store", "discard"];
 const vertexFormats = ["float32", "float32x2", "float32x3", "float32x4"];
 const indexFormats = ["uint16", "uint32"];
-const textureFormats = ["rgba8unorm"];
+const textureFormats = ["rgba8unorm", "depth24plus"];
+const depthCompareFunctions = ["less", "greater"];
 
 let wgpu = {};
 let wgpuIdCounter = 2;
@@ -73,6 +74,7 @@ const wgpu_device_create_render_pipeline = (descriptor) => {
     let vertexBufferPtr = memoryU32[descriptor / 4 + 1];
     let vertexBufferLen = memoryU32[descriptor / 4 + 2];
     const fragmentModule = wgpu[memoryU32[descriptor / 4 + 3]];
+    const depthStencilPtr = memoryU32[descriptor / 4 + 4];
     let vertexBuffers = [];
     while (vertexBufferLen--) {
         let attributes = [];
@@ -93,6 +95,14 @@ const wgpu_device_create_render_pipeline = (descriptor) => {
         });
         vertexBufferPtr += 16;
     }
+    let depthStencil = undefined;
+    if (depthStencilPtr > 0) {
+        depthStencil = {
+            depthCompare: depthCompareFunctions[memoryU32[depthStencilPtr / 4]],
+            depthWriteEnabled: memoryU32[depthStencilPtr / 4 + 1] != 0,
+            format: textureFormats[memoryU32[depthStencilPtr / 4 + 2]],
+        };
+    }
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
     const pipeline = device.createRenderPipeline({
         layout: 'auto',
@@ -104,6 +114,7 @@ const wgpu_device_create_render_pipeline = (descriptor) => {
             module: fragmentModule,
             targets: [{ format: presentationFormat }],
         },
+        depthStencil,
     });
     return wgpuStore(pipeline);
 }
@@ -129,10 +140,10 @@ const wgpu_device_create_sampler = (descriptor) => {
 }
 
 const wgpu_command_encoder_begin_render_pass = (commandEncoder, descriptor) => {
-    let numColorAttachments = memoryU32[descriptor / 4 + 1];
+    let colorAttachmentsLen = memoryU32[descriptor / 4 + 1];
     let colorAttachments = [];
     let i = memoryU32[descriptor / 4] / 4;
-    while (numColorAttachments--) {
+    while (colorAttachmentsLen--) {
         colorAttachments.push({
             view: wgpu[memoryU32[i]],
             loadOp: loadOps[memoryU32[i + 1]],
@@ -141,8 +152,19 @@ const wgpu_command_encoder_begin_render_pass = (commandEncoder, descriptor) => {
         });
         i += 7;
     }
+    let depthStencilAttachment = undefined;
+    const depthStencilAttachmentPtr = memoryU32[descriptor / 4 + 2];
+    if (depthStencilAttachmentPtr > 0) {
+        depthStencilAttachment = {
+            view: wgpu[memoryU32[depthStencilAttachmentPtr / 4]],
+            depthLoadOp: loadOps[memoryU32[depthStencilAttachmentPtr / 4 + 1]],
+            depthStoreOp: storeOps[memoryU32[depthStencilAttachmentPtr / 4 + 2]],
+            depthClearValue: memoryF32[depthStencilAttachmentPtr / 4 + 3],
+        };
+    }
     return wgpuStore(wgpu[commandEncoder].beginRenderPass({
         colorAttachments,
+        depthStencilAttachment,
     }));
 }
 

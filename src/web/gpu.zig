@@ -21,6 +21,7 @@ pub const IndexFormat = enum(u32) {
 
 pub const TextureFormat = enum(u32) {
     rgba8unorm,
+    depth24plus,
 };
 
 pub const RenderPipelineDescriptor = struct {
@@ -39,6 +40,11 @@ pub const RenderPipelineDescriptor = struct {
     fragment: struct {
         module: ShaderModule,
     },
+    depth_stencil: ?*const struct {
+        depth_compare: enum(u32) { less, greater },
+        depth_write_enabled: bool,
+        format: TextureFormat,
+    } = null,
 };
 
 pub const TextureUsage = packed struct(u32) {
@@ -98,8 +104,16 @@ pub const ColorAttachment = struct {
     clear_value: Color,
 };
 
+pub const DepthAttachment = struct {
+    view: TextureView,
+    depth_load_op: LoadOp,
+    depth_store_op: StoreOp,
+    depth_clear_value: f32,
+};
+
 pub const RenderPassDescriptor = struct {
     color_attachments: []const ColorAttachment,
+    depth_stencil_attachment: ?*const DepthAttachment,
 };
 
 pub const BufferUsage = packed struct(u32) {

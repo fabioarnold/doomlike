@@ -45,6 +45,11 @@ const Enemy = struct {
         pipeline = gpu.createRenderPipeline(.{
             .vertex = .{ .module = module },
             .fragment = .{ .module = module },
+            .depth_stencil = &.{
+                .depth_compare = .greater,
+                .format = .depth24plus,
+                .depth_write_enabled = true,
+            },
         });
 
         const texture = gpu.createTexture(.{
@@ -153,6 +158,11 @@ const Floor = struct {
             },
             .fragment = .{
                 .module = module,
+            },
+            .depth_stencil = &.{
+                .depth_compare = .greater,
+                .depth_write_enabled = true,
+                .format = .depth24plus,
             },
         });
 
@@ -287,6 +297,14 @@ pub export fn onDraw() void {
 
     const width = back_buffer.getWidth();
     const height = back_buffer.getHeight();
+
+    const depth_texture = gpu.createTexture(.{
+        .size = .{ .width = width, .height = height },
+        .format = .depth24plus,
+        .usage = .{ .render_attachment = true },
+    });
+    defer depth_texture.release();
+
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
     const projection = la.perspective(60, aspect_ratio, 0.01);
@@ -304,6 +322,8 @@ pub export fn onDraw() void {
 
     const back_buffer_view = back_buffer.createView(.{});
     defer back_buffer_view.release();
+    const depth_texture_view = depth_texture.createView(.{});
+    defer depth_texture_view.release();
     const render_pass = command_encoder.beginRenderPass(.{
         .color_attachments = &.{
             .{
@@ -312,6 +332,12 @@ pub export fn onDraw() void {
                 .store_op = .store,
                 .clear_value = .{ .r = 0.2, .g = 0.2, .b = 0.3, .a = 1 },
             },
+        },
+        .depth_stencil_attachment = &.{
+            .view = depth_texture_view,
+            .depth_load_op = .clear,
+            .depth_store_op = .store,
+            .depth_clear_value = 0,
         },
     });
     defer render_pass.release();
