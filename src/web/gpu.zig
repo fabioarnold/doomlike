@@ -24,15 +24,18 @@ pub const TextureFormat = enum(u32) {
 };
 
 pub const RenderPipelineDescriptor = struct {
-    vertex: struct { module: ShaderModule, buffers: []const struct {
-        array_stride: u32,
-        attributes: []const struct {
-            format: VertexFormat,
-            offset: u32,
-            shader_location: u32,
-        },
-        step_mode: enum(u32) { vertex, instance } = .vertex,
-    } },
+    vertex: struct {
+        module: ShaderModule,
+        buffers: []const struct {
+            array_stride: u32,
+            attributes: []const struct {
+                format: VertexFormat,
+                offset: u32,
+                shader_location: u32,
+            },
+            step_mode: enum(u32) { vertex, instance } = .vertex,
+        } = &.{},
+    },
     fragment: struct {
         module: ShaderModule,
     },
@@ -300,7 +303,7 @@ extern fn wgpu_command_encoder_begin_render_pass(command_encoder: Object, *const
 extern fn wgpu_encoder_set_pipeline(pass_encoder: Object, pipeline: Object) void;
 extern fn wgpu_render_commands_mixin_set_vertex_buffer(pass_encoder: Object, u32, Buffer, u32, i32) void;
 extern fn wgpu_render_commands_mixin_set_index_buffer(pass_encoder: Object, Buffer, IndexFormat, u32, i32) void;
-extern fn wgpu_render_commands_mixin_draw(pass_encoder: Object, u32, u32, u32, u32, u32) void;
+extern fn wgpu_render_commands_mixin_draw(pass_encoder: Object, u32, u32, u32, u32) void;
 extern fn wgpu_render_commands_mixin_draw_indexed(pass_encoder: Object, u32, u32, u32, u32, u32) void;
 extern fn wgpu_encoder_end(pass_encoder: Object) void;
 extern fn wgpu_encoder_finish(command_encoder: Object) CommandBuffer;

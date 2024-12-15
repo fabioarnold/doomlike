@@ -9,12 +9,8 @@ pub const std_options = std.Options{
     .logFn = wasm.log,
 };
 
-const shader_textured_code = @embedFile("shaders/textured.wgsl");
-
-var pipeline: gpu.RenderPipeline = undefined;
-
 var floor: Floor = undefined;
-var enemy: Enemy = undefined;
+var enemies: [20]Enemy = undefined;
 
 const Enemy = struct {
     const sprite_data = @embedFile("textures/bug.data");
@@ -22,15 +18,33 @@ const Enemy = struct {
     const sprite_height = 32;
     const frame_count = 3;
 
-    uniform_buffer: gpu.Buffer,
-    bind_group: gpu.BindGroup,
-    vertex_buffer: gpu.Buffer,
-    index_buffer: gpu.Buffer,
+    const shader_billboard_code = @embedFile("shaders/billboard.wgsl");
+    var pipeline: gpu.RenderPipeline = undefined;
 
-    fn init(self: *Enemy) void {
-        self.uniform_buffer = gpu.createBuffer(.{
-            .size = @sizeOf(la.mat4),
-            .usage = .{ .uniform = true, .copy_dst = true },
+    var uniform_buffer: gpu.Buffer = undefined;
+    var instance_buffer: gpu.Buffer = undefined;
+    var bind_group: gpu.BindGroup = undefined;
+
+    const UniformData = struct {
+        view: la.mat4,
+        projection: la.mat4,
+        scale: la.vec2,
+        offset: la.vec2,
+    };
+
+    const InstanceData = extern struct {
+        position: la.vec2,
+        frame: u32,
+    };
+
+    position: la.vec2,
+    alive: bool,
+
+    fn init() void {
+        const module = gpu.createShaderModule(.{ .code = shader_billboard_code });
+        pipeline = gpu.createRenderPipeline(.{
+            .vertex = .{ .module = module },
+            .fragment = .{ .module = module },
         });
 
         const texture = gpu.createTexture(.{
@@ -49,45 +63,48 @@ const Enemy = struct {
 
         const sampler = gpu.createSampler(.{});
 
-        self.bind_group = gpu.createBindGroup(.{
+        uniform_buffer = gpu.createBuffer(.{
+            .size = @sizeOf(UniformData),
+            .usage = .{ .uniform = true, .copy_dst = true },
+        });
+        const sprite_scale: la.vec2 = .{ 0.25, -0.25 };
+        const sprite_offset: la.vec2 = .{ 0, 0.25 };
+        gpu.queueWriteBuffer(Enemy.uniform_buffer, 2 * @sizeOf(la.mat4), std.mem.asBytes(&sprite_scale));
+        gpu.queueWriteBuffer(Enemy.uniform_buffer, 2 * @sizeOf(la.mat4) + @sizeOf(la.vec2), std.mem.asBytes(&sprite_offset));
+
+        instance_buffer = gpu.createBuffer(.{
+            .size = enemies.len * @sizeOf(InstanceData),
+            .usage = .{ .storage = true, .copy_dst = true },
+        });
+
+        bind_group = gpu.createBindGroup(.{
             .layout = pipeline.getBindGroupLayout(0),
             .entries = &.{
-                .{ .binding = 0, .resource = self.uniform_buffer },
+                .{ .binding = 0, .resource = uniform_buffer },
                 .{ .binding = 1, .resource = sampler },
                 .{ .binding = 2, .resource = texture.createView(.{ .array_layer_count = frame_count }) },
+                .{ .binding = 3, .resource = instance_buffer },
             },
         });
-
-        const vertex_size = 6 * @sizeOf(f32);
-        self.vertex_buffer = gpu.createBuffer(.{
-            .size = 4 * vertex_size,
-            .usage = .{ .vertex = true, .copy_dst = true },
-        });
-        self.index_buffer = gpu.createBuffer(.{
-            .size = 6 * @sizeOf(u16),
-            .usage = .{ .index = true, .copy_dst = true },
-        });
-
-        const vertex_data = [_]f32{
-            -1, -1, 0, 0, 0, 0,
-            1,  -1, 0, 1, 0, 0,
-            1,  1,  0, 1, 1, 0,
-            -1, 1,  0, 0, 1, 0,
-        };
-        gpu.queueWriteBuffer(self.vertex_buffer, 0, std.mem.sliceAsBytes(&vertex_data));
-
-        const index_data = [_]u16{
-            0, 1, 2,
-            0, 2, 3,
-        };
-        gpu.queueWriteBuffer(self.index_buffer, 0, std.mem.sliceAsBytes(&index_data));
     }
 
-    fn draw(self: Enemy, render_pass: gpu.RenderPass) void {
-        render_pass.setBindGroup(0, self.bind_group);
-        render_pass.setVertexBuffer(0, self.vertex_buffer, .{});
-        render_pass.setIndexBuffer(self.index_buffer, .uint16, .{});
-        render_pass.drawIndexed(.{ .index_count = 6 });
+    fn draw(render_pass: gpu.RenderPass) void {
+        var instance_count: u32 = 0;
+
+        for (enemies) |enemy| {
+            if (enemy.alive) {
+                const instance_data = [_]InstanceData{.{
+                    .position = enemy.position,
+                    .frame = 0,
+                }};
+                gpu.queueWriteBuffer(instance_buffer, instance_count * @sizeOf(InstanceData), std.mem.sliceAsBytes(&instance_data));
+                instance_count += 1;
+            }
+        }
+
+        render_pass.setPipeline(pipeline);
+        render_pass.setBindGroup(0, bind_group);
+        render_pass.draw(.{ .vertex_count = 6, .instance_count = instance_count });
     }
 };
 
@@ -97,6 +114,9 @@ const Floor = struct {
     const circuit_height = 64;
     const tile_count = 5;
 
+    const shader_textured_code = @embedFile("shaders/textured.wgsl");
+    var pipeline: gpu.RenderPipeline = undefined;
+
     uniform_buffer: gpu.Buffer,
     bind_group: gpu.BindGroup,
     vertex_buffer: gpu.Buffer,
@@ -104,6 +124,38 @@ const Floor = struct {
     index_count: u32,
 
     fn init(self: *Floor, rows: u32, cols: u32) void {
+        const module = gpu.createShaderModule(.{ .code = shader_textured_code });
+        pipeline = gpu.createRenderPipeline(.{
+            .vertex = .{
+                .module = module,
+                .buffers = &.{
+                    .{
+                        .array_stride = (3 + 2 + 1) * @sizeOf(f32),
+                        .attributes = &.{
+                            .{
+                                .format = .float32x3,
+                                .offset = 0,
+                                .shader_location = 0,
+                            },
+                            .{
+                                .format = .float32x2,
+                                .offset = 3 * @sizeOf(f32),
+                                .shader_location = 1,
+                            },
+                            .{
+                                .format = .float32,
+                                .offset = 5 * @sizeOf(f32),
+                                .shader_location = 2,
+                            },
+                        },
+                    },
+                },
+            },
+            .fragment = .{
+                .module = module,
+            },
+        });
+
         self.uniform_buffer = gpu.createBuffer(.{
             .size = @sizeOf(la.mat4),
             .usage = .{ .uniform = true, .copy_dst = true },
@@ -142,10 +194,9 @@ const Floor = struct {
             .size = rows * cols * 6 * @sizeOf(u16),
             .usage = .{ .index = true, .copy_dst = true },
         });
+    }
 
-        var rng = std.Random.DefaultPrng.init(0);
-        const r = rng.random();
-
+    fn generate(self: *Floor, rows: u32, cols: u32, r: std.Random) void {
         var i: u16 = 0;
         for (0..rows) |row| {
             for (0..cols) |col| {
@@ -160,6 +211,7 @@ const Floor = struct {
                     x + 1, y + 1, 0, 1, 1, tile,
                     x + 0, y + 1, 0, 0, 1, tile,
                 };
+                const vertex_size = 6 * @sizeOf(f32);
                 gpu.queueWriteBuffer(self.vertex_buffer, i * 4 * vertex_size, std.mem.sliceAsBytes(&vertex_data));
 
                 const offset: u16 = @intCast(i * 4);
@@ -174,6 +226,7 @@ const Floor = struct {
     }
 
     fn draw(self: Floor, render_pass: gpu.RenderPass) void {
+        render_pass.setPipeline(pipeline);
         render_pass.setBindGroup(0, self.bind_group);
         render_pass.setVertexBuffer(0, self.vertex_buffer, .{});
         render_pass.setIndexBuffer(self.index_buffer, .uint16, .{});
@@ -182,46 +235,23 @@ const Floor = struct {
 };
 
 pub export fn onInit() void {
-    const module = gpu.createShaderModule(.{ .code = shader_textured_code });
-    pipeline = gpu.createRenderPipeline(.{
-        .vertex = .{
-            .module = module,
-            .buffers = &.{
-                .{
-                    .array_stride = (3 + 2 + 1) * @sizeOf(f32),
-                    .attributes = &.{
-                        .{
-                            .format = .float32x3,
-                            .offset = 0,
-                            .shader_location = 0,
-                        },
-                        .{
-                            .format = .float32x2,
-                            .offset = 3 * @sizeOf(f32),
-                            .shader_location = 1,
-                        },
-                        .{
-                            .format = .float32,
-                            .offset = 5 * @sizeOf(f32),
-                            .shader_location = 2,
-                        },
-                    },
-                },
-            },
-        },
-        .fragment = .{
-            .module = module,
-        },
-    });
+    var rng = std.Random.DefaultPrng.init(0);
+    const r = rng.random();
 
     floor.init(16, 16);
-    enemy.init();
+    floor.generate(16, 16, r);
+
+    Enemy.init();
+    for (&enemies) |*enemy| {
+        enemy.position = .{ r.float(f32) * 16, r.float(f32) * 16 };
+        enemy.alive = true;
+    }
 }
 
 const Player = struct {
     theta: f32 = 0,
     phi: f32 = 0,
-    x: f32 = 0,
+    x: f32 = 8,
     y: f32 = 0,
 };
 var player = Player{};
@@ -260,23 +290,14 @@ pub export fn onDraw() void {
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
     const projection = la.perspective(60, aspect_ratio, 0.01);
-    const view = la.mul(la.rotation(player.theta - 90, .{ 1, 0, 0 }), la.mul(la.rotation(player.phi, .{ 0, 0, 1 }), la.translation(-player.x, -player.y, -0.5)));
+    const view = la.mul(
+        la.mul(la.rotation(player.theta - 90, .{ 1, 0, 0 }), la.rotation(player.phi, .{ 0, 0, 1 })),
+        la.translation(-player.x, -player.y, -0.25),
+    );
     var mvp = la.mul(projection, view);
     gpu.queueWriteBuffer(floor.uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
-
-    var billboard_modelview = la.mul(view, la.translation(4, 4, 0));
-    billboard_modelview[0][0] = 1;
-    billboard_modelview[0][1] = 0;
-    billboard_modelview[0][2] = 0;
-    billboard_modelview[1][0] = 0;
-    billboard_modelview[1][1] = 1;
-    billboard_modelview[1][2] = 0;
-    billboard_modelview[2][0] = 0;
-    billboard_modelview[2][1] = 0;
-    billboard_modelview[2][2] = 1;
-    const sprite = la.mul(la.translation(0, 0.25, 0), la.scale(0.25, -0.25, 1));
-    mvp = la.mul(projection, la.mul(billboard_modelview, sprite));
-    gpu.queueWriteBuffer(enemy.uniform_buffer, 0, std.mem.sliceAsBytes(&mvp));
+    gpu.queueWriteBuffer(Enemy.uniform_buffer, 0, std.mem.sliceAsBytes(&view));
+    gpu.queueWriteBuffer(Enemy.uniform_buffer, @sizeOf(la.mat4), std.mem.sliceAsBytes(&projection));
 
     const command_encoder = gpu.createCommandEncoder();
     defer command_encoder.release();
@@ -295,9 +316,8 @@ pub export fn onDraw() void {
     });
     defer render_pass.release();
 
-    render_pass.setPipeline(pipeline);
     floor.draw(render_pass);
-    enemy.draw(render_pass);
+    Enemy.draw(render_pass);
     render_pass.end();
 
     const command_buffer = command_encoder.finish();
