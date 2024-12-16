@@ -174,6 +174,26 @@ const Level = struct {
         }
     }
 
+    fn distance(p: la.vec2) f32 {
+        const hw = 0.5 * cols;
+        const hh = 0.5 * rows;
+        var min_dist = @min(hw - @abs(hw - p[0]), hh - @abs(hh - p[1]));
+
+        for (0..rows) |row| {
+            for (0..cols) |col| {
+                const i = row * cols + col;
+                if (tilemap[i] == .empty) continue;
+                const x: f32 = @floatFromInt(col);
+                const y: f32 = @floatFromInt(row);
+                const dx = @max(@abs(x + 0.5 - p[0]) - 0.5, 0);
+                const dy = @max(@abs(y + 0.5 - p[1]) - 0.5, 0);
+                min_dist = @min(min_dist, @sqrt(dx * dx + dy * dy));
+            }
+        }
+
+        return min_dist;
+    }
+
     fn draw(render_pass: gpu.RenderPass) void {
         if (instance_count == 0) return;
 
@@ -608,6 +628,7 @@ pub export fn onInit() void {
 
 const Player = struct {
     const speed = 2;
+    const radius = 0.5;
 
     theta: f32 = 0,
     phi: f32 = 0,
@@ -634,19 +655,43 @@ pub export fn onDraw() void {
     defer t_prev = t;
     const dt = t - t_prev;
 
-    var move_x: f32 = 0;
-    var move_y: f32 = 0;
-    if (isKeyDown(87)) move_y += 1;
-    if (isKeyDown(65)) move_x -= 1;
-    if (isKeyDown(83)) move_y -= 1;
-    if (isKeyDown(68)) move_x += 1;
+    var input_x: f32 = 0;
+    var input_y: f32 = 0;
+    if (isKeyDown(87)) input_y += 1;
+    if (isKeyDown(65)) input_x -= 1;
+    if (isKeyDown(83)) input_y -= 1;
+    if (isKeyDown(68)) input_x += 1;
 
     const s = @sin(std.math.degreesToRadians(player.phi));
     const c = @cos(std.math.degreesToRadians(player.phi));
-    const dir_x = (c * move_x + s * move_y);
-    const dir_y = (-s * move_x + c * move_y);
-    player.x += dir_x * Player.speed * dt;
-    player.y += dir_y * Player.speed * dt;
+    const dir_x = (c * input_x + s * input_y);
+    const dir_y = (-s * input_x + c * input_y);
+    var move_x = dir_x * Player.speed * dt;
+    var move_y = dir_y * Player.speed * dt;
+    var test_x = player.x + move_x;
+    var test_y = player.y + move_y;
+    if (Level.distance(.{ test_x, test_y }) < Player.radius) {
+        // compute normal
+        var n_x = Level.distance(.{ player.x + 0.01, player.y }) - Level.distance(.{ player.x - 0.01, player.y });
+        var n_y = Level.distance(.{ player.x, player.y + 0.01 }) - Level.distance(.{ player.x, player.y - 0.01 });
+        const n_len = @sqrt(n_x * n_x + n_y * n_y);
+        n_x /= n_len;
+        n_y /= n_len;
+        // clip
+        const backoff = n_x * move_x + n_y * move_y;
+        move_x -= backoff * n_x;
+        move_y -= backoff * n_y;
+        // try again
+        test_x = player.x + move_x;
+        test_y = player.y + move_y;
+        if (Level.distance(.{ test_x, test_y }) > Player.radius) {
+            player.x = test_x;
+            player.y = test_y;
+        }
+    } else {
+        player.x = test_x;
+        player.y = test_y;
+    }
 
     if (shoot) {
         shoot = false;
