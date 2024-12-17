@@ -627,15 +627,35 @@ pub export fn onInit() void {
 }
 
 const Player = struct {
-    const speed = 2;
+    const speed = 4;
     const radius = 0.5;
 
-    theta: f32 = 0,
-    phi: f32 = 0,
     x: f32 = 0,
     y: f32 = 0,
+    phi: f32 = 0,
+    theta: f32 = 0,
 };
 var player = Player{};
+
+const Pointers = struct {
+    player: *const Player,
+    tilemap: *const @TypeOf(Level.tilemap),
+    enemies: *const @TypeOf(enemies),
+    shots: *const @TypeOf(shots),
+};
+
+pub export fn getPointers() *const Pointers {
+    log.info("@sizeOf(Enemy)={}", .{@sizeOf(Enemy)});
+    log.info("@offsetOf(Enemy, active)={}", .{@offsetOf(Enemy, "active")});
+    log.info("@sizeOf(Shot)={}", .{@sizeOf(Shot)});
+    log.info("@offsetOf(Shot, active)={}", .{@offsetOf(Shot, "active")});
+    return &.{
+        .player = &player,
+        .tilemap = &Level.tilemap,
+        .enemies = &enemies,
+        .shots = &shots,
+    };
+}
 
 var shoot = false;
 pub export fn onMouseDown() void {

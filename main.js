@@ -290,15 +290,82 @@ const env = {
     wgpu_queue_write_texture,
 };
 
+let playerPtr;
+let tilemapPtr;
+let enemiesPtr;
+let shotsPtr;
+function drawMinimap() {
+    const canvas = document.querySelector("canvas.minimap");
+    const ctx = canvas.getContext("2d");
+    const rows = 16;
+    const cols = 16;
+    const tileSize = 16;
+    canvas.width = cols * tileSize;
+    canvas.height = rows * tileSize;
+    ctx.resetTransform();
+    ctx.translate(0, canvas.height);
+    ctx.scale(tileSize, -tileSize);
+    ctx.lineWidth = 1 / tileSize;
+    for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+            const i = row * cols + col;
+            // const byte = memoryU8[tilemapPtr + (i>>3)];
+            // const bitmask = 1<<(i&7);
+            if (memoryU8[tilemapPtr + i]) {
+                ctx.fillStyle = "#FFF";
+            } else {
+                const shade = (row + col) % 2;
+                ctx.fillStyle = "#000" + 2*shade;
+            }
+            ctx.beginPath();
+            ctx.rect(col, row, 1, 1);
+            ctx.fill();
+        }
+    }
+
+    const playerX = memoryF32[playerPtr / 4];
+    const playerY = memoryF32[playerPtr / 4 + 1];
+    const playerPhi = memoryF32[playerPtr / 4 + 2];
+    ctx.beginPath();
+    ctx.arc(playerX, playerY, 0.5, 0, 2 * Math.PI);
+    ctx.fillStyle = "#F008";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(playerX, playerY);
+    ctx.lineTo(playerX + Math.sin(playerPhi * Math.PI / 180), playerY + Math.cos(playerPhi * Math.PI / 180));
+    ctx.strokeStyle = "#F00";
+    ctx.stroke();
+
+    for (let i = 0; i < 20; i++) {
+        const shotX = memoryF32[shotsPtr / 4 + i * 6];
+        const shotY = memoryF32[shotsPtr / 4 + i * 6 + 1];
+        const shotActive = memoryU8[shotsPtr + i * 24 + 16];
+        if (shotActive) {
+            ctx.beginPath();
+            ctx.arc(shotX, shotY, 0.25, 0, 2 * Math.PI);
+            ctx.fillStyle = "#F80";
+            ctx.fill();
+        }
+        const enemyX = memoryF32[enemiesPtr / 4 + i * 6];
+        const enemyY = memoryF32[enemiesPtr / 4 + i * 6 + 1];
+        const enemyActive = memoryU8[enemiesPtr + i * 24 + 20];
+        if (enemyActive) {
+            ctx.beginPath();
+            ctx.arc(enemyX, enemyY, 0.5, 0, 2 * Math.PI);
+            ctx.fillStyle = "#08F";
+            ctx.fill();
+        }
+    }
+}
+
 async function main() {
     const adapter = await navigator.gpu?.requestAdapter();
     const device = await adapter?.requestDevice();
     if (!device) {
-        fail('need a browser that supports WebGPU');
+        console.error('need a browser that supports WebGPU');
         return;
     }
-    // Get a WebGPU context from the canvas and configure it
-    const canvas = document.querySelector('canvas');
+    const canvas = document.querySelector('canvas.main');
     const context = canvas.getContext('webgpu');
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
     context.configure({
@@ -322,6 +389,12 @@ async function main() {
     window.memoryU32 = new Uint32Array(memory.buffer);
     window.memoryF32 = new Float32Array(memory.buffer);
     instance.exports.onInit();
+
+    const pointers = instance.exports.getPointers();
+    playerPtr = memoryU32[pointers / 4];
+    tilemapPtr = memoryU32[pointers / 4 + 1];
+    enemiesPtr = memoryU32[pointers / 4 + 2];
+    shotsPtr = memoryU32[pointers / 4 + 3];
 
     canvas.addEventListener("click", async () => {
         await canvas.requestPointerLock({
@@ -349,6 +422,7 @@ async function main() {
     const draw = () => {
         instance.exports.onDraw();
         requestAnimationFrame(draw);
+        drawMinimap();
     }
     draw();
 }
