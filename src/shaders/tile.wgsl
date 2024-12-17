@@ -64,13 +64,12 @@ struct VertexOut {
 
     var lightColor = vec3f(0.0);
     for (var i: u32; i < lightData.activeLights; i++) {
-        let diff = in.worldPosition - lightData.lights[i].position;
-        let dist = sqrt(dot(diff, diff));
-        let atten = max(0.0, 1.0 - dist / 8.0);
+        let dist = length(in.worldPosition - lightData.lights[i].position);
+        let atten = max(0.0, 1.0 - dist / 6.0);
         lightColor += atten * atten * lightData.lights[i].color;
     }
 
-    color = vec4f(0.5 * color.rgb + 0.5 * lightColor, color.a);
+    color = vec4f(0.25 * color.rgb + 0.75 * mix(lightColor, color.rgb, 0.25), color.a);
 
     return color;
 }
