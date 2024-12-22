@@ -669,11 +669,13 @@ pub export fn onMouseMove(x: f32, y: f32) void {
 
 extern fn isKeyDown(key: u32) bool;
 
+var space_down_prev: bool = false;
 var t_prev: f32 = 0;
 pub export fn onDraw() void {
     const t: f32 = @floatCast(wasm.performance.now() / 1000.0);
     defer t_prev = t;
     const dt = t - t_prev;
+    defer space_down_prev = isKeyDown(32);
 
     var input_x: f32 = 0;
     var input_y: f32 = 0;
@@ -681,6 +683,9 @@ pub export fn onDraw() void {
     if (isKeyDown(65)) input_x -= 1;
     if (isKeyDown(83)) input_y -= 1;
     if (isKeyDown(68)) input_x += 1;
+    if (isKeyDown(37)) player.phi -= 90 * dt;
+    if (isKeyDown(39)) player.phi += 90 * dt;
+    if (isKeyDown(32) and !space_down_prev) shoot = true;
 
     const s = @sin(std.math.degreesToRadians(player.phi));
     const c = @cos(std.math.degreesToRadians(player.phi));
